@@ -8,7 +8,7 @@ function Ultrasound_GUI
 
     ax = axes('Parent',f,'Position',[0.05 0.15 0.6 0.8]);
 
-    %% UI CONTROLS
+    %% UI Controls
     uicontrol(f,'Style','pushbutton','String','Load DICOM', ...
         'Position',[900 600 150 40],'Callback',@loadImage);
 
@@ -24,6 +24,10 @@ function Ultrasound_GUI
 
     chkLayer3 = uicontrol(f,'Style','checkbox','String','Layer 3 (Deep)', ...
         'Position',[900 370 150 30],'Callback',@updateDisplay);
+    set(chkLayer1,'Visible','off');
+    set(chkLayer2,'Visible','off');
+    set(chkLayer3,'Visible','off');
+
     
     resultsBox = uicontrol(f,'Style','text', ...
     'Position',[900 150 350 200], ...
@@ -40,7 +44,7 @@ function Ultrasound_GUI
     );
     guidata(f,data);
 
-    %% ================= CALLBACKS =================
+    %% Callbacks
 
     function loadImage(~,~)
         [file,path] = uigetfile('*.dcm','Select Ultrasound DICOM');
@@ -55,6 +59,23 @@ function Ultrasound_GUI
         data.results = analyze_layers(data.mask);
         data.resultsText = formatResults(data.results);
         data.resultsBox = resultsBox;
+        % Only show available layer checkboxes
+        set(chkLayer1,'Visible','off','Value',0);
+        set(chkLayer2,'Visible','off','Value',0);
+        set(chkLayer3,'Visible','off','Value',0);
+        
+        numLayers = length(data.results);
+        
+        if numLayers >= 1
+            set(chkLayer1,'Visible','on');
+        end
+        if numLayers >= 2
+            set(chkLayer2,'Visible','on');
+        end
+        if numLayers >= 3
+            set(chkLayer3,'Visible','on');
+        end
+
 
         guidata(f,data);
         updateDisplay();
@@ -66,7 +87,7 @@ function Ultrasound_GUI
 
         cla(ax);
 
-        % ---------- IMAGE SELECTION ----------
+        % Image Selection
         switch imgPopup.Value
             case 1
                 imshow(data.I_crop,[],'Parent',ax);
@@ -88,7 +109,6 @@ function Ultrasound_GUI
 
         hold(ax,'on');
 
-        % ---------- OVERLAYS ----------
         if isempty(data.results), hold(ax,'off'); return; end
 
         if chkLayer1.Value && length(data.results)>=1
@@ -110,7 +130,7 @@ function Ultrasound_GUI
             return;
         end
     
-        txt = '';
+        txt = sprintf('Detected layers: %d\n\n', length(results));
         for i = 1:length(results)
             txt = sprintf('%sLayer %d:\n  Mean thickness: %.2f px\n  Max thickness:  %.2f px\n\n', ...
                 txt, i, results(i).MeanThickness, results(i).MaxThickness);
