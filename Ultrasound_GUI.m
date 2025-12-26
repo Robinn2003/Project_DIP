@@ -10,30 +10,33 @@ function Ultrasound_GUI
 
     %% UI CONTROLS
     uicontrol(f,'Style','pushbutton','String','Load DICOM', ...
-        'Position',[750 600 150 40],'Callback',@loadImage);
+        'Position',[900 600 150 40],'Callback',@loadImage);
 
     imgPopup = uicontrol(f,'Style','popupmenu', ...
-        'String',{'Original','Denoised', 'Netmask', 'Calculated'}, ...
-        'Position',[750 480 150 30],'Callback',@updateDisplay);
+        'String',{'Original','Denoised','Netmask'}, ...
+        'Position',[900 480 150 30],'Callback',@updateDisplay);
 
-    chkSkin = uicontrol(f,'Style','checkbox','String','Skin', ...
-        'Position',[750 430 120 30],'Callback',@updateDisplay);
+    chkLayer1 = uicontrol(f,'Style','checkbox','String','Layer 1 (Top)', ...
+        'Position',[900 430 150 30],'Callback',@updateDisplay);
 
-    chkFascia = uicontrol(f,'Style','checkbox','String','Fascia', ...
-        'Position',[750 400 120 30],'Callback',@updateDisplay);
+    chkLayer2 = uicontrol(f,'Style','checkbox','String','Layer 2 (Mid)', ...
+        'Position',[900 400 150 30],'Callback',@updateDisplay);
 
-    chkDeep = uicontrol(f,'Style','checkbox','String','Deep Fascia', ...
-        'Position',[750 370 140 30],'Callback',@updateDisplay);
+    chkLayer3 = uicontrol(f,'Style','checkbox','String','Layer 3 (Deep)', ...
+        'Position',[900 370 150 30],'Callback',@updateDisplay);
+    
+    resultsBox = uicontrol(f,'Style','text', ...
+    'Position',[900 150 350 200], ...
+    'HorizontalAlignment','left', ...
+    'FontSize',10, ...
+    'String','Load an image to see results');
 
     %% Shared data
     data = struct( ...
-    'I_crop',[], ...
-    'I_clean',[], ...
-    'I_netmask',[], ...
-    'I_calculated',[], ...
-    'skinMask',[], ...
-    'fasciaMask',[], ...
-    'deepMask',[] ...
+        'I_crop',[], ...
+        'I_clean',[], ...
+        'mask',[], ...
+        'results',[] ...
     );
     guidata(f,data);
 
@@ -44,15 +47,16 @@ function Ultrasound_GUI
         if file==0, return; end
 
         data = guidata(f);
+
+        % Processing pipeline
         data.I_crop  = load_and_crop(fullfile(path,file));
         data.I_clean = denoise_ultrasound(data.I_crop);
-        data.I_netmask = compute_netmask(data.I_clean); % TODO -> Chaimae
-        data.I_calculated = calculate(data.I_clean); % TODO -> Wassim
-        data.skinMask   = detect_skin(data.I_clean); % TODO -> get the right submask from chaimae function
-        data.fasciaMask = detect_fascia(data.I_clean); % TODO
-        data.deepMask   = detect_deep_fascia(data.I_clean); % TODO
-        guidata(f,data);
+        data.mask    = segment_layer(data.I_clean);
+        data.results = analyze_layers(data.mask);
+        data.resultsText = formatResults(data.results);
+        data.resultsBox = resultsBox;
 
+        guidata(f,data);
         updateDisplay();
     end
 
@@ -62,40 +66,72 @@ function Ultrasound_GUI
 
         cla(ax);
 
+        % ---------- IMAGE SELECTION ----------
         switch imgPopup.Value
-            case 1 % Original
-            imshow(data.I_crop,[],'Parent',ax);
-            title(ax,'Original');
+            case 1
+                imshow(data.I_crop,[],'Parent',ax);
+                title(ax,'Original');
 
-        case 2 % Denoised
-            imshow(data.I_clean,[],'Parent',ax);
-            title(ax,'Denoised');
+            case 2
+                imshow(data.I_clean,[],'Parent',ax);
+                title(ax,'Denoised');
 
-        case 3 % Netmask
-            imshow(data.I_netmask,[],'Parent',ax);
-            title(ax,'Netmask');
-
-        case 4 % Thickness
-            imshow(data.I_calculated,[],'Parent',ax);
-            title(ax,'Thickness Measurement');
+            case 3
+                imshow(data.mask,[],'Parent',ax);
+                title(ax,'Netmask (Segmented Fascia)');
         end
+
+        if isfield(data,'resultsText')
+            set(data.resultsBox,'String',data.resultsText);
+        end
+
 
         hold(ax,'on');
 
-        % ---- LAYER OVERLAYS (NEXT STEP) ----
-        if chkSkin.Value && ~isempty(data.skinMask)
-            visboundaries(ax, data.skinMask, 'Color', 'r', 'LineWidth', 2);
-            % plot(xSkin, ySkin, 'r','LineWidth',2)
+        % ---------- OVERLAYS ----------
+        if isempty(data.results), hold(ax,'off'); return; end
+
+        if chkLayer1.Value && length(data.results)>=1
+            plotLayer(data.results(1),'r');
         end
-        if chkFascia.Value && ~isempty(data.fasciaMask)
-            visboundaries(ax, data.fasciaMask, 'Color', 'g', 'LineWidth', 2);
-            % plot(xFascia, yFascia, 'g','LineWidth',2)
+        if chkLayer2.Value && length(data.results)>=2
+            plotLayer(data.results(2),'g');
         end
-        if chkDeep.Value && ~isempty(data.deepMask)
-            visboundaries(ax, data.deepMask, 'Color','b','LineWidth',2);
-            % plot(xDeep, yDeep, 'b','LineWidth',2)
+        if chkLayer3.Value && length(data.results)>=3
+            plotLayer(data.results(3),'b');
         end
 
         hold(ax,'off');
+    end
+
+    function txt = formatResults(results)
+        if isempty(results)
+            txt = 'No valid layers detected.';
+            return;
+        end
+    
+        txt = '';
+        for i = 1:length(results)
+            txt = sprintf('%sLayer %d:\n  Mean thickness: %.2f px\n  Max thickness:  %.2f px\n\n', ...
+                txt, i, results(i).MeanThickness, results(i).MaxThickness);
+        end
+    end
+
+
+    function plotLayer(layer,color)
+        midX = mean(layer.XData);
+        midY = mean(layer.Y_Top);
+        
+        text(ax, midX, midY-10, ...
+        sprintf('Mean thickness = %.2f px', layer.MeanThickness), ...
+        'Color', color, ...
+        'FontSize', 10, ...
+        'FontWeight', 'bold', ...
+        'BackgroundColor', 'w', ...
+        'Margin', 2);
+
+
+        plot(ax, layer.XData, layer.Y_Top, color, 'LineWidth',2);
+        plot(ax, layer.XData, layer.Y_Bottom, color, 'LineWidth',2);
     end
 end
